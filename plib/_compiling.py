@@ -12,6 +12,7 @@ The core job of a compiler somehow modify Predict modules so they perform better
 """
 
 import abc
+import asyncio
 import copy
 import typing
 
