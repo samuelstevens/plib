@@ -52,5 +52,16 @@ class Compiler(abc.ABC):
 
 @beartype.beartype
 class BootstrapFewShot(Compiler):
-    # Describe this class. AI!
+    """
+    A compiler that optimizes modules by bootstrapping few-shot examples.
+    
+    This compiler iteratively:
+    1. Runs the module on a dataset to get predictions
+    2. Scores the predictions using the metric
+    3. Selects the best performing examples as few-shot examples
+    4. Updates the module with these examples
+    
+    This bootstrapping process helps find effective few-shot examples
+    that improve the module's performance on the given task.
+    """
     pass
