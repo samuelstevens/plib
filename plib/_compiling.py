@@ -12,7 +12,6 @@ The core job of a compiler somehow modify Predict modules so they perform better
 """
 
 import abc
-import asyncio
 import copy
 import typing
 
@@ -101,21 +100,20 @@ class BootstrapFewShot(Compiler):
         candidate_examples = []
 
         # Bootstrap process:
-        # Process dataset in parallel using asyncio
-        async def process_example(example):
+        # 1. Make predictions on dataset
+        # 2. Score predictions
+        # 3. Add good examples to candidates
+        # Do this in parallel using asyncio, but only until we have self.n_examples candidates, then cancel the other tasks. AI!
+        for example in dataset:
             # Get prediction from current state of module
             pred = await optimized.process(example.query)
+
             # Score the prediction
             _, is_good = await metric.score(example, pred)
-            return example if is_good else None
 
-        # Run all examples in parallel
-        results = await asyncio.gather(
-            *(process_example(example) for example in dataset)
-        )
-        
-        # Filter out None results and add good examples to candidates
-        candidate_examples = [r for r in results if r is not None]
+            # If prediction is good, add to candidates
+            if is_good:
+                candidate_examples.append(example)
 
         # Select best examples from candidates
         selected_examples = self._select_examples(candidate_examples)
