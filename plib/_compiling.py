@@ -100,20 +100,31 @@ class BootstrapFewShot(Compiler):
         candidate_examples = []
 
         # Bootstrap process:
-        # 1. Make predictions on dataset
-        # 2. Score predictions
-        # 3. Add good examples to candidates
-        # Do this in parallel using asyncio, but only until we have self.n_examples candidates, then cancel the other tasks. AI!
-        for example in dataset:
-            # Get prediction from current state of module
+        # Process examples in parallel until we have enough candidates
+        async def process_example(example):
             pred = await optimized.process(example.query)
-
-            # Score the prediction
             _, is_good = await metric.score(example, pred)
+            return example if is_good else None
 
-            # If prediction is good, add to candidates
-            if is_good:
-                candidate_examples.append(example)
+        candidate_examples = []
+        async with asyncio.TaskGroup() as tg:
+            # Create task for each example
+            tasks = [tg.create_task(process_example(ex)) for ex in dataset]
+            
+            # Wait for tasks and collect results until we have enough
+            for task in asyncio.as_completed(tasks):
+                try:
+                    result = await task
+                    if result is not None:
+                        candidate_examples.append(result)
+                        if len(candidate_examples) >= self.n_examples:
+                            # Cancel remaining tasks once we have enough examples
+                            for t in tasks:
+                                if not t.done():
+                                    t.cancel()
+                            break
+                except asyncio.CancelledError:
+                    pass
 
         # Select best examples from candidates
         selected_examples = self._select_examples(candidate_examples)
