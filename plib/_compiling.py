@@ -12,6 +12,7 @@ The core job of a compiler somehow modify Predict modules so they perform better
 """
 
 import abc
+import copy
 import typing
 
 import beartype
@@ -54,14 +55,73 @@ class Compiler(abc.ABC):
 class BootstrapFewShot(Compiler):
     """
     A compiler that optimizes modules by bootstrapping few-shot examples.
-    
+
     This compiler iteratively:
     1. Runs the module on a dataset to get predictions
     2. Scores the predictions using the metric
     3. Selects the best performing examples as few-shot examples
     4. Updates the module with these examples
-    
+
     This bootstrapping process helps find effective few-shot examples
     that improve the module's performance on the given task.
     """
-    pass
+
+    def __init__(self, n_examples: int = 3):
+        """Initialize the compiler with configuration parameters
+
+        Args:
+            n_examples: Number of examples to select for few-shot learning
+        """
+        self.n_examples = n_examples
+
+    async def compile(
+        self, module: Module, metric: Metric, dataset: typing.Sequence[Example]
+    ) -> Module:
+        """Optimize the module by finding good few-shot examples
+
+        Args:
+            module: The module to optimize
+            metric: Metric for scoring predictions
+            dataset: Examples to learn from
+
+        Returns:
+            New optimized module with selected examples
+        """
+
+        # Create a copy of the module to avoid modifying the original
+        optimized = copy.deepcopy(module)
+
+        # Get all Predict nodes in the module tree
+        predicts = module.get_predicts()
+        if not predicts:
+            return optimized  # No Predict nodes to optimize
+
+        # Initialize empty set of candidate examples
+        candidate_examples = []
+
+        # Bootstrap process:
+        # 1. Make predictions on dataset
+        # 2. Score predictions
+        # 3. Add good examples to candidates
+        # Do this in parallel using asyncio. AI!
+        for example in dataset:
+            # Get prediction from current state of module
+            pred = await optimized.process(example.query)
+
+            # Score the prediction
+            _, is_good = await metric.score(example, pred)
+
+            # If prediction is good, add to candidates
+            if is_good:
+                candidate_examples.append(example)
+
+        # Select best examples from candidates
+        selected_examples = self._select_examples(candidate_examples)
+
+        # Update each Predict node with selected examples
+        for predict in predicts:
+            predict.clear_examples()
+            for example in selected_examples:
+                predict.add_example(example)
+
+        return optimized
