@@ -1,0 +1,38 @@
+# Task Instructions
+{{ instruction }}
+
+## Input/Output Format
+The task takes the following inputs and produces the following outputs:
+
+### Inputs:
+{% for field in schema.inputs %}
+* **{{field.name}}**: {{ field.desc.capitalize() }}
+{% endfor %}
+
+### Outputs:
+{% for field in schema.outputs %}
+* **{{field.name}}**: {{ field.desc.capitalize() }}
+{% endfor %}
+
+{% if examples %}## Examples
+{% for example in examples %}
+### Example {{ loop.index }}
+**Input:**
+{% for field in schema.inputs %}
+* {{field.name}}: {{example[field.name]}}
+{% endfor %}
+
+**Output:**
+{% for field in schema.outputs %}
+* {{field.name}}: {{example[field.name]}}
+{% endfor %}
+
+{% endfor %}{% endif %}
+## Current Task
+**Input:**
+{% for field in schema.inputs %}
+* {{field.name}}: {{todo[field.name]}}
+{% endfor %}
+
+**Output:**
+Please provide {{ output_tags }}.

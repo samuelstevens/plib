@@ -1,12 +1,10 @@
-# plib/_parsing.py
-
 import re
-from typing import dict, Any
 
+from .. import settings
 from .._data import Schema
 
 
-def parse_xml(text: str, schema: Schema) -> dict[str, Any]:
+def parse_xml(text: str, schema: Schema) -> dict[str, object]:
     """Parse XML formatted LLM response"""
     outputs = {}
     for field in schema.outputs:
@@ -18,7 +16,7 @@ def parse_xml(text: str, schema: Schema) -> dict[str, Any]:
     return outputs
 
 
-def parse_markdown(text: str, schema: Schema) -> dict[str, Any]:
+def parse_markdown(text: str, schema: Schema) -> dict[str, object]:
     """Parse Markdown formatted LLM response"""
     outputs = {}
     for field in schema.outputs:
@@ -40,9 +38,12 @@ def parse_markdown(text: str, schema: Schema) -> dict[str, Any]:
 _PARSERS = {"xml": parse_xml, "markdown": parse_markdown}
 
 
-def parse(text: str, schema: Schema, template_type: str) -> dict[str, Any]:
+def parse(text: str, schema: Schema, template_type: str = "") -> dict[str, object]:
     """Parse LLM response according to template type"""
+    template_type = template_type or settings.get("template")
     if template_type not in _PARSERS:
-        raise ValueError(f"Unknown template type: {template_type}. Must be one of: {', '.join(_PARSERS.keys())}")
+        raise ValueError(
+            f"Unknown template type: {template_type}. Must be one of: {', '.join(_PARSERS.keys())}"
+        )
     parser = _PARSERS[template_type]
     return parser(text)

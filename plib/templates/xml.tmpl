@@ -1,0 +1,21 @@
+Please complete the following task: {{ instruction }}
+
+The task inputs and outputs are formatted as XML, like below:
+
+Format:
+{% for field in schema.inputs %}
+<{{field.name.lower()}}>{{ '{{' }}{{field.desc.capitalize()}}{{ '}}' }}</{{field.name.lower()}}>{% endfor %}
+{% for field in schema.outputs %}
+<{{field.name.lower()}}>{{ '{{' }}{{field.desc.capitalize()}}{{ '}}' }}</{{field.name.lower()}}>{% endfor %}
+
+{% if examples %}Examples:
+{% for example in examples %}{% for field in schema.inputs %}
+<{{field.name.lower()}}>{{example[field.name]}}</{{field.name.lower()}}>{% endfor %}
+{% for field in schema.outputs %}
+<{{field.name.lower()}}>{{example[field.name]}}</{{field.name.lower()}}>{% endfor %}{% endfor %}
+{% endif %}
+Task:
+{% for field in schema.inputs %}
+<{{field.name.lower()}}>{{todo[field.name]}}</{{field.name.lower()}}>{% endfor %}
+
+Complete {{ output_tags }}.
