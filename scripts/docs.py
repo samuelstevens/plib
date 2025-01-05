@@ -99,7 +99,9 @@ def get_md_fence(fpath: str, content: str) -> str:
         elif interpreter == "node":
             return "javascript"
 
-    # Default to stripped extension if no match. AI!
+    # Default to stripped extension (without dot) if no match
+    if ext:
+        return ext[1:]  # Remove the leading dot
     return "text"
 
 
