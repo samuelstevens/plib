@@ -1,5 +1,31 @@
-# Document this file. Describe example public usage. AI!
+"""
+Settings management for the plib library.
 
+This module provides a simple key-value store for global settings with context management.
+Settings can be configured globally or temporarily modified within a context.
+
+Example usage:
+
+    # Configure global settings
+    import plib
+    plib.settings.configure(
+        lm=plib.OpenAi(...),  # Set the language model
+        n_proc=100,           # Set number of processes
+        temperature=0.7,      # Set temperature for LLM sampling
+        use_cache=True,       # Enable response caching
+        trace=True,          # Enable tracing
+        logdir="custom_logs"  # Set custom log directory
+    )
+
+    # Get individual settings
+    temperature = plib.settings.get("temperature")
+    
+    # Temporarily override settings in a context
+    with plib.settings.context(temperature=0.9, trace=False):
+        # Settings are modified only within this block
+        ...
+    # Settings revert to previous values
+"""
 
 import contextlib
 import os
