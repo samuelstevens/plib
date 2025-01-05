@@ -1,5 +1,6 @@
 import glob
 import os
+import subprocess
 
 
 def main(in_dpaths: list[str], out_fpath: str):
@@ -10,23 +11,19 @@ def main(in_dpaths: list[str], out_fpath: str):
     """
 
     content = []
-    
-    # Get all Python source files using git ls-files
-    import subprocess
-    
+
+    # Get all source files using git ls-files
     for dpath in in_dpaths:
-        # Get both tracked and untracked (but trackable) Python files
+        # Get both tracked and untracked (but trackable) files
         cmd = ["git", "ls-files", "--cached", "--others", "--exclude-standard", dpath]
         result = subprocess.run(cmd, capture_output=True, text=True)
         files = result.stdout.splitlines()
-        
-        # Filter for Python files and process them
+
         for fpath in files:
-            if fpath.endswith(".py"):
-                with open(fpath, "r") as f:
-                    rel_path = os.path.relpath(fpath)
-                    file_content = f"# {rel_path}\n\n```python\n{f.read()}\n```"
-                    content.append(file_content)
+            with open(fpath, "r") as f:
+                rel_path = os.path.relpath(fpath)
+                file_content = f"# {rel_path}\n\n```python\n{f.read()}\n```"
+                content.append(file_content)
 
     # Find all .md files in docs/ except those in docs/api/
     md_files = ["README.md"]
