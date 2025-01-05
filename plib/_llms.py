@@ -49,9 +49,13 @@ def send(msg: str, history: list[object]) -> tuple[str, list[object]]:
             max_tokens=max_tokens,
         )
 
-        # Extract and return the response text
-        # Return updated history as well AI!
-        return response.choices[0].message.content
+        # Extract response and update history
+        response_text = response.choices[0].message.content
+        
+        # Add response to history
+        messages.append({"role": "assistant", "content": response_text})
+        
+        return response_text, messages
 
     except Exception as e:
         # Wrap any LiteLLM errors
