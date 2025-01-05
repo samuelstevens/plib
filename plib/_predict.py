@@ -2,6 +2,7 @@ import collections.abc
 
 import beartype
 
+from . import settings, templates, _llms
 from ._data import Example, Query, Response, Schema
 
 
@@ -32,11 +33,20 @@ class Module:
     @property
     def schema(self) -> Schema:
         """The schema this module expects/produces"""
-        if hasattr(self, '_schema') and isinstance(self._schema, Schema):
+        if hasattr(self, "_schema") and isinstance(self._schema, Schema):
             return self._schema
         raise NotImplementedError
 
-    async def process(self, query: Query) -> Response:
+    async def __call__(self, query: Query) -> Response:
+        resp = await self.forward(query)
+        if not isinstance(resp, Response):
+            raise TypeError(
+                f"{self.__class__.__name__}({query}) produced {resp}, which is a {type(resp)}, not a Response."
+            )
+
+        return resp
+
+    async def forward(self, query: Query) -> Response:
         """
         Transform the query according to module's logic.
         Example transformations:
@@ -58,15 +68,35 @@ class Predict(Module):
             examples: Optional few-shot examples to use in prompts
         """
         super().__init__()
-        self._schema = schema
-        self.examples = examples or []
+        self._schema: Schema = schema
+        self.examples: list[Example] = examples or []
 
-    def schema(self) -> Schema
-        return self
+        self._trace: Example | None = None
 
-    async def __call__(self, query: Query) -> Response:
+    async def forward(self, query: Query) -> Response:
         """Make LLM call with few-shot examples"""
-        pass
+        template = templates.get_template()
+
+        context = {
+            "instruction": self.schema.instruction,
+            "schema": {"inputs": self.schema.inputs, "outputs": self.schema.outputs},
+            "examples": [
+                {**example.inputs, **example.outputs} for example in self.examples
+            ],
+            "todo": query.inputs,
+            "output_tags": ", ".join(f.name for f in self.schema.outputs),
+        }
+
+        # Render prompt
+        prompt = template.render(**context)
+        response, _ = await _llms.send(prompt)
+
+        # Make Example from response and query. AI!
+
+        if settings.get("trace"):
+            self._trace = response
+
+        return response
 
     def predicts(self) -> collections.abc.Iterator["Predict"]:
         """Returns an iterator over all Predict nodes in this module (just self for Predict)"""
@@ -83,3 +113,12 @@ class Predict(Module):
     def clear_examples(self):
         """Remove all few-shot examples"""
         self.examples = []
+
+    @property
+    def trace(self) -> Example:
+        if self._trace is None:
+            raise ValueError(
+                f"Missing trace. You need to call {self}(example) with plib.settings.context(trace=True) to record a trace."
+            )
+
+        return self._trace
