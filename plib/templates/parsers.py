@@ -42,6 +42,7 @@ _PARSERS = {"xml": parse_xml, "markdown": parse_markdown}
 
 def parse(text: str, schema: Schema, template_type: str) -> dict[str, Any]:
     """Parse LLM response according to template type"""
-    # Add a ValueError if template_type is missing. AI!
+    if template_type not in _PARSERS:
+        raise ValueError(f"Unknown template type: {template_type}. Must be one of: {', '.join(_PARSERS.keys())}")
     parser = _PARSERS[template_type]
     return parser(text)
