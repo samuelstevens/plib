@@ -6,25 +6,25 @@ Settings can be configured globally or temporarily modified within a context.
 
 Example usage:
 
-    # Configure global settings
-    import plib
-    plib.settings.configure(
-        lm=plib.OpenAi(...),  # Set the language model
-        n_proc=100,           # Set number of processes
-        temperature=0.7,      # Set temperature for LLM sampling
-        use_cache=True,       # Enable response caching
-        trace=True,          # Enable tracing
-        logdir="custom_logs"  # Set custom log directory
-    )
+```py
+# Configure global settings
+import plib
+plib.settings.configure(
+    llm="ollama_chat/mistral:7b",  # Set the language model
+    n_proc=100,                    # Set number of processes
+    use_cache=True,                # Enable response caching
+    logdir="custom_logs"           # Set custom log directory
+)
 
-    # Get individual settings
-    temperature = plib.settings.get("temperature")
-    
-    # Temporarily override settings in a context
-    with plib.settings.context(temperature=0.9, trace=False):
-        # Settings are modified only within this block
-        ...
-    # Settings revert to previous values
+# Get individual settings
+temperature = plib.settings.get("temperature")
+
+# Temporarily override settings in a context
+with plib.settings.context(temperature=0.9, trace=True):
+    # Settings are modified only within this block
+    ...
+# Settings revert to previous values
+```
 """
 
 import contextlib
@@ -36,7 +36,7 @@ _settings = {"trace": False, "logdir": "logs", "use_cache": True, "temperature":
 os.makedirs(_settings["logdir"], exist_ok=True)
 
 _known_errors = {
-    "lm": "Need to call plib.settings.configure(lm=plib.OpenAi(...))",
+    "llm": "Need to call plib.settings.configure(llm='ollama_chat/llama3.1:8b')",
     "n_proc": "Need to call plib.settings.configure(n_proc=100)",
 }
 

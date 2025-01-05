@@ -21,10 +21,15 @@ def send(msg: str, history: list[object]) -> str:
     """
     # Get required model setting
     model = settings.get("llm")  # e.g. "gpt-4"
-    
-    # Get optional settings with defaults
-    temperature = 0.7 if settings.get("temperature") is None else settings.get("temperature")
-    max_tokens = 1000 if settings.get("max_tokens") is None else settings.get("max_tokens")
-    
+
+    # Get optional settings with defaults.
+    # Make a clean separation of defaults for each setting, rather than this repeated code. AI!
+    temperature = (
+        0.7 if settings.get("temperature") is None else settings.get("temperature")
+    )
+    max_tokens = (
+        1000 if settings.get("max_tokens") is None else settings.get("max_tokens")
+    )
+
     # TODO: Implement LLM call
     pass
