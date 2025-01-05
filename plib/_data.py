@@ -16,6 +16,7 @@ This is why you'll often see functions taking a Query (asking something new) and
 """
 
 import dataclasses
+from typing import Type, Union
 
 import beartype
 
@@ -24,7 +25,7 @@ import beartype
 @dataclasses.dataclass(frozen=True)
 class InputField:
     name: str
-    type_: type
+    type_: Union[type, Type]
     desc: str
 
 
