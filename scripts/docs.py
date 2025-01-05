@@ -49,58 +49,58 @@ def main(in_dpaths: list[str], out_fpath: str):
 
 def get_md_fence(fpath: str, content: str) -> str:
     """Determine the appropriate markdown code fence tag for a file.
-    
+
     Args:
         fpath: Path to the file
         content: Content of the file
-        
+
     Returns:
         The markdown code fence tag to use
     """
     # Extension based mapping
     ext_map = {
-        '.py': 'python',
-        '.js': 'javascript',
-        '.ts': 'typescript',
-        '.sh': 'bash',
-        '.bash': 'bash',
-        '.zsh': 'bash',
-        '.yml': 'yaml',
-        '.yaml': 'yaml',
-        '.json': 'json',
-        '.md': 'markdown',
-        '.html': 'html',
-        '.css': 'css',
-        '.rs': 'rust',
-        '.go': 'go',
-        '.java': 'java',
-        '.cpp': 'cpp',
-        '.c': 'c',
-        '.sql': 'sql',
+        ".py": "python",
+        ".js": "javascript",
+        ".ts": "typescript",
+        ".sh": "bash",
+        ".bash": "bash",
+        ".zsh": "bash",
+        ".yml": "yaml",
+        ".yaml": "yaml",
+        ".json": "json",
+        ".md": "markdown",
+        ".html": "html",
+        ".css": "css",
+        ".rs": "rust",
+        ".go": "go",
+        ".java": "java",
+        ".cpp": "cpp",
+        ".c": "c",
+        ".sql": "sql",
     }
-    
+
     # Get extension
     ext = os.path.splitext(fpath)[1].lower()
-    
+
     # Check extension first
     if ext in ext_map:
         return ext_map[ext]
-        
+
     # Content-based detection for special cases
-    if re.search(r'^#!\s*/bin/(bash|sh|zsh)', content):
-        return 'bash'
-    if re.search(r'^#!\s*/usr/bin/env\s+(python|bash|node)', content):
-        match = re.search(r'^#!\s*/usr/bin/env\s+(\w+)', content)
+    if re.search(r"^#!\s*/bin/(bash|sh|zsh)", content):
+        return "bash"
+    if re.search(r"^#!\s*/usr/bin/env\s+(python|bash|node)", content):
+        match = re.search(r"^#!\s*/usr/bin/env\s+(\w+)", content)
         interpreter = match.group(1)
-        if interpreter == 'python':
-            return 'python'
-        elif interpreter in ['bash', 'sh', 'zsh']:
-            return 'bash'
-        elif interpreter == 'node':
-            return 'javascript'
-            
-    # Default to text if no match
-    return 'text'
+        if interpreter == "python":
+            return "python"
+        elif interpreter in ["bash", "sh", "zsh"]:
+            return "bash"
+        elif interpreter == "node":
+            return "javascript"
+
+    # Default to stripped extension if no match. AI!
+    return "text"
 
 
 def with_header(md_file: str, md_content: str, root: str) -> str:
