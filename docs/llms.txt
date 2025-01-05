@@ -22,6 +22,65 @@ __all__ = [
 
 ```
 
+# plib/_compiling.py
+
+```python
+"""
+Compilers optimize Modules by finding good few-shot examples for their Predict components
+Modules form a tree structure:
+
+Internal nodes are Modules that transform programs (CoT, BestOfN, etc.).
+Leaf nodes are Predict modules that make actual LLM calls.
+Only Predict nodes need examples/optimization.
+
+Similar to PyTorch's parameters(), modules expose named_predicts() to find all Predict leaves.
+Compilers are immutable - they return new optimized modules rather than modifying in place.
+The core job of a compiler somehow modify Predict modules so they perform better.
+"""
+
+import abc
+import collections.abc
+import contextvars
+
+import beartype
+
+from ._data import Example, Response
+from ._predict import Module
+
+trace_stack = contextvars.ContextVar("trace_stack", default=None)
+
+
+@beartype.beartype
+class Metric(abc.ABC):
+    """
+    Describes how to score a given response with a reference gold example. Can use a plib.Module if you want!
+    """
+
+    async def score(self, gold: Example, response: Response) -> tuple[float, bool]:
+        raise NotImplementedError()
+
+
+@beartype.beartype
+class Compiler(abc.ABC):
+    """
+    Abstract base class for compilers that optimize Module trees.
+
+    Compilers can modify various aspects of modules to improve their performance:
+    - Select good few-shot examples for Predict nodes
+    - Modify prompt instructions
+    - Transform schemas
+    - Other optimizations
+
+    Compilers are immutable - they return new optimized modules rather than modifying in place.
+    """
+
+    async def compile(
+        self, module: Module, metric: Metric, dataset: collections.abc.Sequence[Example]
+    ) -> Module:
+        raise NotImplementedError()
+
+```
+
 # plib/_data.py
 
 ```python
@@ -144,141 +203,6 @@ class Example:
     def outputs(self) -> dict:
         """Access output values"""
         return self.response.outputs
-
-```
-
-# plib/compilers.py
-
-```python
-import collections
-import copy
-
-from . import settings
-from ._compiling import Compiler, Metric
-from ._data import Example
-from ._predict import Module
-
-
-class BootstrapFewShot(Compiler):
-    """Compiler that finds good few-shot examples by trying them on a dataset.
-
-    For each successful run through the module:
-    1. Captures traces from each Predict node
-    2. If metric scores well, saves those traces as candidate examples
-    3. Updates each Predict with its best examples
-    """
-
-    def __init__(self, n_examples: int = 3):
-        self.n_examples: int = n_examples
-
-    async def compile(
-        self, module: Module, metric: Metric, dataset: collections.abc.Sequence[Example]
-    ):
-        optimized = copy.deepcopy(module)
-        candidate_examples: dict[str, list[tuple[Example, float]]] = (
-            collections.defaultdict(list)
-        )
-
-        # Try each example in dataset
-        for example in dataset:
-            # Set tracing on to capture the full interaction
-            with settings.context(trace=True):
-                try:
-                    # Make prediction with full module
-                    response = await module(example.query)
-
-                    # Score the prediction
-                    score, is_good = await metric.score(example, response)
-
-                    if is_good:
-                        # If good, collect traces from all Predicts
-                        for name, predict in module.named_predicts():
-                            # Each predict's trace is an Example we can use
-                            candidate_examples[name].append((predict.trace, score))
-
-                except Exception as e:
-                    print(f"Error processing example: {e}")
-                    continue
-
-        if not candidate_examples:
-            raise ValueError("No good examples found in dataset")
-
-        # For each Predict node, select its best examples
-        for name, predict in optimized.named_predicts():
-            predict.clear_examples()
-
-            # Sort candidate examples by score
-            candidates = candidate_examples[name]
-            best_examples = sorted(
-                candidates,
-                key=lambda x: x[1],  # sort by score
-                reverse=True,
-            )[: self.n_examples]
-
-            # Add best examples to the predict
-            for example, _ in best_examples:
-                predict.add_example(example)
-
-        return optimized
-
-```
-
-# plib/_compiling.py
-
-```python
-"""
-Compilers optimize Modules by finding good few-shot examples for their Predict components
-Modules form a tree structure:
-
-Internal nodes are Modules that transform programs (CoT, BestOfN, etc.).
-Leaf nodes are Predict modules that make actual LLM calls.
-Only Predict nodes need examples/optimization.
-
-Similar to PyTorch's parameters(), modules expose named_predicts() to find all Predict leaves.
-Compilers are immutable - they return new optimized modules rather than modifying in place.
-The core job of a compiler somehow modify Predict modules so they perform better.
-"""
-
-import abc
-import collections.abc
-import contextvars
-
-import beartype
-
-from ._data import Example, Response
-from ._predict import Module
-
-trace_stack = contextvars.ContextVar("trace_stack", default=None)
-
-
-@beartype.beartype
-class Metric(abc.ABC):
-    """
-    Describes how to score a given response with a reference gold example. Can use a plib.Module if you want!
-    """
-
-    async def score(self, gold: Example, response: Response) -> tuple[float, bool]:
-        raise NotImplementedError()
-
-
-@beartype.beartype
-class Compiler(abc.ABC):
-    """
-    Abstract base class for compilers that optimize Module trees.
-
-    Compilers can modify various aspects of modules to improve their performance:
-    - Select good few-shot examples for Predict nodes
-    - Modify prompt instructions
-    - Transform schemas
-    - Other optimizations
-
-    Compilers are immutable - they return new optimized modules rather than modifying in place.
-    """
-
-    async def compile(
-        self, module: Module, metric: Metric, dataset: collections.abc.Sequence[Example]
-    ) -> Module:
-        raise NotImplementedError()
 
 ```
 
@@ -477,6 +401,82 @@ class Predict(Module):
             )
 
         return self._trace
+
+```
+
+# plib/compilers.py
+
+```python
+import collections
+import copy
+
+from . import settings
+from ._compiling import Compiler, Metric
+from ._data import Example
+from ._predict import Module
+
+
+class BootstrapFewShot(Compiler):
+    """Compiler that finds good few-shot examples by trying them on a dataset.
+
+    For each successful run through the module:
+    1. Captures traces from each Predict node
+    2. If metric scores well, saves those traces as candidate examples
+    3. Updates each Predict with its best examples
+    """
+
+    def __init__(self, n_examples: int = 3):
+        self.n_examples: int = n_examples
+
+    async def compile(
+        self, module: Module, metric: Metric, dataset: collections.abc.Sequence[Example]
+    ):
+        optimized = copy.deepcopy(module)
+        candidate_examples: dict[str, list[tuple[Example, float]]] = (
+            collections.defaultdict(list)
+        )
+
+        # Try each example in dataset
+        for example in dataset:
+            # Set tracing on to capture the full interaction
+            with settings.context(trace=True):
+                try:
+                    # Make prediction with full module
+                    response = await module(example.query)
+
+                    # Score the prediction
+                    score, is_good = await metric.score(example, response)
+
+                    if is_good:
+                        # If good, collect traces from all Predicts
+                        for name, predict in module.named_predicts():
+                            # Each predict's trace is an Example we can use
+                            candidate_examples[name].append((predict.trace, score))
+
+                except Exception as e:
+                    print(f"Error processing example: {e}")
+                    continue
+
+        if not candidate_examples:
+            raise ValueError("No good examples found in dataset")
+
+        # For each Predict node, select its best examples
+        for name, predict in optimized.named_predicts():
+            predict.clear_examples()
+
+            # Sort candidate examples by score
+            candidates = candidate_examples[name]
+            best_examples = sorted(
+                candidates,
+                key=lambda x: x[1],  # sort by score
+                reverse=True,
+            )[: self.n_examples]
+
+            # Add best examples to the predict
+            for example, _ in best_examples:
+                predict.add_example(example)
+
+        return optimized
 
 ```
 
