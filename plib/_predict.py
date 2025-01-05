@@ -89,12 +89,16 @@ class Predict(Module):
 
         # Render prompt
         prompt = template.render(**context)
-        response, _ = await _llms.send(prompt)
+        response_text, _ = await _llms.send(prompt)
 
-        # Make Example from response and query. AI!
+        # Create Response object from LLM output
+        response = Response(outputs={"text": response_text})
+
+        # Create Example from query inputs and response outputs for tracing
+        example = Example(inputs=query.inputs, outputs=response.outputs)
 
         if settings.get("trace"):
-            self._trace = response
+            self._trace = example
 
         return response
 
