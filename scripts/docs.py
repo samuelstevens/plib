@@ -10,16 +10,23 @@ def main(in_dpaths: list[str], out_fpath: str):
     """
 
     content = []
-    # Get all source code files from input directories using git ls-files, including unadded but trackable files. AI!
+    
+    # Get all Python source files using git ls-files
+    import subprocess
+    
     for dpath in in_dpaths:
-        for root, _, files in os.walk(dpath):
-            for file in files:
-                if file.endswith(".py"):
-                    fpath = os.path.join(root, file)
-                    with open(fpath, "r") as f:
-                        rel_path = os.path.relpath(fpath)
-                        file_content = f"# {rel_path}\n\n```python\n{f.read()}\n```"
-                        content.append(file_content)
+        # Get both tracked and untracked (but trackable) Python files
+        cmd = ["git", "ls-files", "--cached", "--others", "--exclude-standard", dpath]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        files = result.stdout.splitlines()
+        
+        # Filter for Python files and process them
+        for fpath in files:
+            if fpath.endswith(".py"):
+                with open(fpath, "r") as f:
+                    rel_path = os.path.relpath(fpath)
+                    file_content = f"# {rel_path}\n\n```python\n{f.read()}\n```"
+                    content.append(file_content)
 
     # Find all .md files in docs/ except those in docs/api/
     md_files = ["README.md"]
