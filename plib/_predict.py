@@ -32,7 +32,8 @@ class Module:
     @property
     def schema(self) -> Schema:
         """The schema this module expects/produces"""
-        # Return self._schema if it's defined and is an instance of Schema, otherwise raise NotImplementedError. AI!
+        if hasattr(self, '_schema') and isinstance(self._schema, Schema):
+            return self._schema
         raise NotImplementedError
 
     async def process(self, query: Query) -> Response:
