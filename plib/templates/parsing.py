@@ -1,7 +1,8 @@
 import re
 
-from .. import settings
 from .._data import Schema
+
+from .. import settings
 
 
 def parse_xml(text: str, schema: Schema) -> dict[str, object]:
@@ -21,6 +22,7 @@ def parse_markdown(text: str, schema: Schema) -> dict[str, object]:
     outputs = {}
     for field in schema.outputs:
         # Look for either bullet or header style outputs
+        # Use raw-style striles to avoid SyntaxWarning AI!
         patterns = [
             f"[*-] {field.name}:\s*(.*?)(?:\n|$)",  # Bullet format
             f"\*\*{field.name}\*\*:\s*(.*?)(?:\n|$)",  # Bold format
