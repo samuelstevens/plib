@@ -1,0 +1,931 @@
+# plib/__init__.py
+
+```python
+from ._compiling import Compiler, Metric
+from ._data import Example, InputField, OutputField, Query, Response, Schema
+from ._predict import Module, Predict
+from .compilers import BootstrapFewShot
+
+__all__ = [
+    "Compiler",
+    "Metric",
+    "BootstrapFewShot",
+    "InputField",
+    "OutputField",
+    "Predict",
+    "Module",
+    "Schema",
+    "Example",
+    "Query",
+    "Response",
+]
+
+```
+
+# plib/_data.py
+
+```python
+"""
+`Query`, `Response`, and `Example` represent different states in the lifecycle of an LLM interaction:
+`Query` represents "what we want to know". It's a request waiting for an answer - like asking a question or describing a task. A Query must have values for all the input fields defined in its Schema. Think of it as the "question" part of a question-answer pair.
+
+`Response` represents "what the LLM told us". It contains both the original Query (to maintain context) and the outputs the LLM generated. Every Response must have values for all the output fields defined in its Schema. Think of it as the "answer" part combined with the original question for context.
+
+`Example` represents a complete Query-Response pair that we know worked well. We use Examples to teach the LLM through few-shot learning - showing it "here's a question like this, and here's how you answered it well before." Examples are the core teaching material we use to guide the LLM's behavior.
+
+The key relationships:
+
+* A Query becomes a Response after the LLM processes it
+* A good Query-Response pair can become an Example for future use
+* Examples are broken down into their Query and Response parts when used for teaching
+
+This is why you'll often see functions taking a Query (asking something new) and a list of Examples (showing previous successful cases) to help guide the LLM to produce a good Response.
+"""
+
+import dataclasses
+
+import beartype
+
+
+@beartype.beartype
+@dataclasses.dataclass(frozen=True)
+class InputField:
+    name: str
+    type_: type
+    desc: str
+
+
+@beartype.beartype
+@dataclasses.dataclass(frozen=True)
+class OutputField:
+    name: str
+    type_: type
+    desc: str
+
+
+@beartype.beartype
+@dataclasses.dataclass(frozen=True)
+class Schema:
+    instruction: str
+    inputs: list[InputField]
+    outputs: list[OutputField]
+
+
+@beartype.beartype
+@dataclasses.dataclass(frozen=True)
+class Query:
+    """Holds input values that match a schema's input fields"""
+
+    schema: Schema
+    inputs: dict[str, object]
+
+    def __post_init__(self):
+        # Validate all schema inputs are provided
+        missing = set(f.name for f in self.schema.inputs) - set(self.inputs.keys())
+        if missing:
+            raise ValueError(f"Missing required inputs: {missing}")
+
+        # Validate input types
+        for field in self.schema.inputs:
+            if not isinstance(self.inputs[field.name], field.type_):
+                raise TypeError(f"Input '{field.name}' must be {field.type_}")
+
+
+@beartype.beartype
+@dataclasses.dataclass(frozen=True)
+class Response:
+    """Holds output values produced by LLM that match a schema's output fields"""
+
+    schema: Schema
+    outputs: dict[str, object]
+
+    def __post_init__(self):
+        # Validate all schema outputs are provided
+        missing = set(f.name for f in self.schema.outputs) - set(self.outputs.keys())
+        if missing:
+            raise ValueError(f"Missing required outputs: {missing}")
+
+        # Validate output types
+        for field in self.schema.outputs:
+            if not isinstance(self.outputs[field.name], field.type_):
+                raise TypeError(f"Output '{field.name}' must be {field.type_}")
+
+
+@beartype.beartype
+@dataclasses.dataclass(frozen=True)
+class Example:
+    """A complete input/output pair used for few-shot learning"""
+
+    query: Query
+    response: Response
+
+    def __post_init__(self):
+        # Validate query and response share same schema
+        if self.query.schema != self.response.schema:
+            raise ValueError("Query and Response must have same schema")
+
+    @property
+    def schema(self) -> Schema:
+        return self.query.schema
+
+    @classmethod
+    def from_dicts(cls, schema: Schema, inputs: dict, outputs: dict) -> "Example":
+        """Convenience constructor from raw dicts"""
+        query = Query(schema, inputs)
+        response = Response(schema, outputs)
+        return cls(query, response)
+
+    @property
+    def inputs(self) -> dict:
+        """Access input values"""
+        return self.query.inputs
+
+    @property
+    def outputs(self) -> dict:
+        """Access output values"""
+        return self.response.outputs
+
+```
+
+# plib/compilers.py
+
+```python
+import collections
+import copy
+
+from . import settings
+from ._compiling import Compiler, Metric
+from ._data import Example
+from ._predict import Module
+
+
+class BootstrapFewShot(Compiler):
+    """Compiler that finds good few-shot examples by trying them on a dataset.
+
+    For each successful run through the module:
+    1. Captures traces from each Predict node
+    2. If metric scores well, saves those traces as candidate examples
+    3. Updates each Predict with its best examples
+    """
+
+    def __init__(self, n_examples: int = 3):
+        self.n_examples: int = n_examples
+
+    async def compile(
+        self, module: Module, metric: Metric, dataset: collections.abc.Sequence[Example]
+    ):
+        optimized = copy.deepcopy(module)
+        candidate_examples: dict[str, list[tuple[Example, float]]] = (
+            collections.defaultdict(list)
+        )
+
+        # Try each example in dataset
+        for example in dataset:
+            # Set tracing on to capture the full interaction
+            with settings.context(trace=True):
+                try:
+                    # Make prediction with full module
+                    response = await module(example.query)
+
+                    # Score the prediction
+                    score, is_good = await metric.score(example, response)
+
+                    if is_good:
+                        # If good, collect traces from all Predicts
+                        for name, predict in module.named_predicts():
+                            # Each predict's trace is an Example we can use
+                            candidate_examples[name].append((predict.trace, score))
+
+                except Exception as e:
+                    print(f"Error processing example: {e}")
+                    continue
+
+        if not candidate_examples:
+            raise ValueError("No good examples found in dataset")
+
+        # For each Predict node, select its best examples
+        for name, predict in optimized.named_predicts():
+            predict.clear_examples()
+
+            # Sort candidate examples by score
+            candidates = candidate_examples[name]
+            best_examples = sorted(
+                candidates,
+                key=lambda x: x[1],  # sort by score
+                reverse=True,
+            )[: self.n_examples]
+
+            # Add best examples to the predict
+            for example, _ in best_examples:
+                predict.add_example(example)
+
+        return optimized
+
+```
+
+# plib/_compiling.py
+
+```python
+"""
+Compilers optimize Modules by finding good few-shot examples for their Predict components
+Modules form a tree structure:
+
+Internal nodes are Modules that transform programs (CoT, BestOfN, etc.).
+Leaf nodes are Predict modules that make actual LLM calls.
+Only Predict nodes need examples/optimization.
+
+Similar to PyTorch's parameters(), modules expose named_predicts() to find all Predict leaves.
+Compilers are immutable - they return new optimized modules rather than modifying in place.
+The core job of a compiler somehow modify Predict modules so they perform better.
+"""
+
+import abc
+import collections.abc
+import contextvars
+
+import beartype
+
+from ._data import Example, Response
+from ._predict import Module
+
+trace_stack = contextvars.ContextVar("trace_stack", default=None)
+
+
+@beartype.beartype
+class Metric(abc.ABC):
+    """
+    Describes how to score a given response with a reference gold example. Can use a plib.Module if you want!
+    """
+
+    async def score(self, gold: Example, response: Response) -> tuple[float, bool]:
+        raise NotImplementedError()
+
+
+@beartype.beartype
+class Compiler(abc.ABC):
+    """
+    Abstract base class for compilers that optimize Module trees.
+
+    Compilers can modify various aspects of modules to improve their performance:
+    - Select good few-shot examples for Predict nodes
+    - Modify prompt instructions
+    - Transform schemas
+    - Other optimizations
+
+    Compilers are immutable - they return new optimized modules rather than modifying in place.
+    """
+
+    async def compile(
+        self, module: Module, metric: Metric, dataset: collections.abc.Sequence[Example]
+    ) -> Module:
+        raise NotImplementedError()
+
+```
+
+# plib/_llms.py
+
+```python
+import beartype
+import litellm
+
+from . import settings
+
+
+@beartype.beartype
+async def send(msg: str, history: list[object] = None) -> tuple[str, list[object]]:
+    """
+    Send a message to the LLM and get the response.
+
+    Args:
+        msg: The message to send to the LLM
+        history: Optional chat history for context
+
+    Returns:
+        The LLM's response as a string and new history.
+
+    Raises:
+        ValueError: If required settings are missing
+        RuntimeError: If LLM call fails
+    """
+    # Get required model setting
+    model = settings.get("llm")  # e.g. "gpt-4"
+
+    # Get optional settings with defaults.
+    temperature = (
+        0.7 if settings.get("temperature") is None else settings.get("temperature")
+    )
+
+    try:
+        # Format messages for chat completion
+        messages = []
+
+        # Add history if provided
+        if history:
+            messages.extend(history)
+
+        # Add current message
+        messages.append({"role": "user", "content": msg})
+
+        # Make LLM call
+        response = await litellm.acompletion(
+            model=model,
+            messages=messages,
+            temperature=temperature,
+        )
+
+        # Extract response and update history
+        response_text = response.choices[0].message.content
+
+        # Add response to history
+        messages.append({"role": "assistant", "content": response_text})
+
+        return response_text, messages
+
+    except Exception as e:
+        # Wrap any LiteLLM errors
+        raise RuntimeError(f"LLM call failed: {str(e)}") from e
+
+```
+
+# plib/_predict.py
+
+```python
+import collections.abc
+
+import beartype
+
+from . import _llms, settings, templates
+from ._data import Example, Query, Response, Schema
+
+
+@beartype.beartype
+class Module:
+    """Base class for LLM program transformations"""
+
+    def __init__(self):
+        self._modules = {}
+
+    def register_module(self, name: str, module: "Module") -> None:
+        """Registers a child module"""
+        self._modules[name] = module
+
+    def predicts(self) -> collections.abc.Iterator["Predict"]:
+        """Returns an iterator over all Predict nodes in this module and children"""
+        for module in self._modules.values():
+            if module is not None:
+                yield from module.predicts()
+
+    def named_predicts(self) -> collections.abc.Iterator[tuple[str, "Predict"]]:
+        """Returns an iterator over (name, predict) pairs for this module and children"""
+        for name, module in self._modules.items():
+            if module is not None:
+                for subname, predict in module.named_predicts():
+                    yield (f"{name}.{subname}" if subname else name), predict
+
+    @property
+    def schema(self) -> Schema:
+        """The schema this module expects/produces"""
+        if hasattr(self, "_schema") and isinstance(self._schema, Schema):
+            return self._schema
+        raise NotImplementedError
+
+    async def __call__(self, query: Query) -> Response:
+        resp = await self.forward(query)
+        if not isinstance(resp, Response):
+            raise TypeError(
+                f"{self.__class__.__name__}({query}) produced {resp}, which is a {type(resp)}, not a Response."
+            )
+
+        return resp
+
+    async def forward(self, query: Query) -> Response:
+        """
+        Transform the query according to module's logic.
+        Example transformations:
+        - Add reasoning steps (Chain of Thought)
+        - Sample multiple responses (Best of N)
+        - Run multi-step loops (ReAct)
+        """
+        raise NotImplementedError
+
+
+@beartype.beartype
+class Predict(Module):
+    """Makes LLM calls using few-shot examples"""
+
+    def __init__(self, schema: Schema, examples: list[Example] = None):
+        """
+        Args:
+            schema: Defines input/output structure
+            examples: Optional few-shot examples to use in prompts
+        """
+        super().__init__()
+        self._schema: Schema = schema
+        self.examples: list[Example] = examples or []
+
+        self._trace: Example | None = None
+
+    async def forward(self, query: Query) -> Response:
+        """Make LLM call with few-shot examples"""
+        template = templates.load()
+
+        context = {
+            "instruction": self.schema.instruction,
+            "schema": {"inputs": self.schema.inputs, "outputs": self.schema.outputs},
+            "examples": [
+                {**example.inputs, **example.outputs} for example in self.examples
+            ],
+            "todo": query.inputs,
+            "output_tags": ", ".join(f.name for f in self.schema.outputs),
+        }
+
+        # Render prompt
+        prompt = template.render(**context)
+        text, _ = await _llms.send(prompt)
+        outputs = templates.parse(text, self.schema)
+        response = Response(self.schema, outputs)
+
+        # Create Example from query inputs and response outputs for tracing
+        example = Example(query, response)
+
+        if settings.get("trace"):
+            self._trace = example
+
+        return response
+
+    def predicts(self) -> collections.abc.Iterator["Predict"]:
+        """Returns an iterator over all Predict nodes in this module (just self for Predict)"""
+        yield self
+
+    def named_predicts(self) -> collections.abc.Iterator[tuple[str, "Predict"]]:
+        """Returns an iterator over (name, predict) pairs (just self for Predict)"""
+        yield "", self
+
+    def add_example(self, example: Example):
+        """Add a few-shot example"""
+        self.examples.append(example)
+
+    def clear_examples(self):
+        """Remove all few-shot examples"""
+        self.examples = []
+
+    @property
+    def trace(self) -> Example:
+        if self._trace is None:
+            raise ValueError(
+                f"Missing trace. You need to call {self}(example) with plib.settings.context(trace=True) to record a trace."
+            )
+
+        return self._trace
+
+```
+
+# plib/settings.py
+
+```python
+"""
+Settings management for the plib library.
+
+This module provides a simple key-value store for global settings with context management.
+Settings can be configured globally or temporarily modified within a context.
+
+Example usage:
+
+```py
+# Configure global settings
+import plib
+plib.settings.configure(
+    llm="ollama_chat/mistral:7b",  # Set the language model
+    n_proc=100,                    # Set number of processes
+    use_cache=True,                # Enable response caching
+    logdir="custom_logs"           # Set custom log directory
+)
+
+# Get individual settings
+temperature = plib.settings.get("temperature")
+
+# Temporarily override settings in a context
+with plib.settings.context(temperature=0.9, trace=True):
+    # Settings are modified only within this block
+    ...
+# Settings revert to previous values
+```
+"""
+
+import contextlib
+import os
+import typing
+
+_settings = {
+    "trace": False,
+    "logdir": "logs",
+    "use_cache": True,
+    "temperature": None,
+    "template": "xml",
+}
+
+os.makedirs(_settings["logdir"], exist_ok=True)
+
+_known_errors = {
+    "llm": "Need to call plib.settings.configure(llm='ollama_chat/llama3.1:8b')",
+    "n_proc": "Need to call plib.settings.configure(n_proc=100)",
+    "template": "Need to call plib.settings.configure(template='xml|markdown')",
+}
+
+
+def get(key) -> typing.Any:
+    if key in _settings:
+        return _settings[key]
+
+    if key in _known_errors:
+        raise ValueError(_known_errors[key])
+
+    raise ValueError(f"Missing setting: {key}")
+
+
+def configure(**kwargs):
+    for key, value in kwargs.items():
+        _settings[key] = value
+
+
+@contextlib.contextmanager
+def context(**kwargs):
+    old = {}
+    for key, value in kwargs.items():
+        if key in _settings:
+            old[key] = _settings.pop(key)
+
+        _settings[key] = value
+
+    yield
+
+    for key, value in kwargs.items():
+        _settings.pop(key)
+
+        if key in old:
+            _settings[key] = old.pop(key)
+
+    assert not old
+
+```
+
+# plib/templates/__init__.py
+
+```python
+from .parsing import parse
+from .templating import load
+
+__all__ = ["load", "parse"]
+
+```
+
+# plib/templates/markdown.tmpl
+
+```tmpl
+# Task Instructions
+{{ instruction }}
+
+## Input/Output Format
+The task takes the following inputs and produces the following outputs:
+
+### Inputs:
+{% for field in schema.inputs %}
+* **{{field.name}}**: {{ field.desc.capitalize() }}
+{% endfor %}
+
+### Outputs:
+{% for field in schema.outputs %}
+* **{{field.name}}**: {{ field.desc.capitalize() }}
+{% endfor %}
+
+{% if examples %}## Examples
+{% for example in examples %}
+### Example {{ loop.index }}
+**Input:**
+{% for field in schema.inputs %}
+* {{field.name}}: {{example[field.name]}}
+{% endfor %}
+
+**Output:**
+{% for field in schema.outputs %}
+* {{field.name}}: {{example[field.name]}}
+{% endfor %}
+
+{% endfor %}{% endif %}
+## Current Task
+**Input:**
+{% for field in schema.inputs %}
+* {{field.name}}: {{todo[field.name]}}
+{% endfor %}
+
+**Output:**
+Please provide {{ output_tags }}.
+
+```
+
+# plib/templates/parsing.py
+
+```python
+import re
+
+from .. import settings
+from .._data import Schema
+
+
+def parse_xml(text: str, schema: Schema) -> dict[str, object]:
+    """Parse XML formatted LLM response"""
+    outputs = {}
+    for field in schema.outputs:
+        pattern = f"<{field.name.lower()}>(.*?)</{field.name.lower()}>"
+        match = re.search(pattern, text, re.DOTALL)
+        if not match:
+            raise ValueError(f"Missing required output field: {field.name}")
+        outputs[field.name] = field.type_(match.group(1).strip())
+    return outputs
+
+
+def parse_markdown(text: str, schema: Schema) -> dict[str, object]:
+    """Parse Markdown formatted LLM response"""
+    outputs = {}
+    for field in schema.outputs:
+        # Look for either bullet or header style outputs
+        patterns = [
+            rf"[*-] {field.name}:\s*(.*?)(?:\n|$)",  # Bullet format
+            rf"\*\*{field.name}\*\*:\s*(.*?)(?:\n|$)",  # Bold format
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, text, re.DOTALL)
+            if match:
+                outputs[field.name] = field.type_(match.group(1).strip())
+                break
+
+        if field.name not in outputs:
+            breakpoint()
+            raise ValueError(f"Missing required output field: {field.name}")
+    return outputs
+
+
+_PARSERS = {"xml": parse_xml, "markdown": parse_markdown}
+
+
+def parse(text: str, schema: Schema, template_type: str = "") -> dict[str, object]:
+    """Parse LLM response according to template type"""
+    template_type = template_type or settings.get("template")
+    if template_type not in _PARSERS:
+        raise ValueError(
+            f"Unknown template type: {template_type}. Must be one of: {', '.join(_PARSERS.keys())}"
+        )
+    parser = _PARSERS[template_type]
+    return parser(text, schema)
+
+```
+
+# plib/templates/templating.py
+
+```python
+import pathlib
+
+import jinja2
+
+from .. import settings
+
+# Initialize Jinja environment
+_env = jinja2.Environment(
+    loader=jinja2.FileSystemLoader(pathlib.Path(__file__).parent),
+    trim_blocks=True,
+    lstrip_blocks=True,
+    autoescape=jinja2.select_autoescape(),
+)
+
+# Cache for loaded templates
+_cache: dict[str, jinja2.Template] = {}
+
+
+def load(template_type: str = None) -> jinja2.Template:
+    """Get the appropriate template based on settings or override"""
+    # Use provided type or get from settings
+    template_type = template_type or settings.get("template")
+
+    # Load template if not already loaded
+    if template_type not in _cache:
+        try:
+            _cache[template_type] = _env.get_template(f"{template_type}.tmpl")
+        except jinja2.TemplateNotFound:
+            raise ValueError(f"Unsupported template type: {template_type}")
+
+    return _cache[template_type]
+
+```
+
+# plib/templates/xml.tmpl
+
+```tmpl
+Please complete the following task: {{ instruction }}
+
+The task inputs and outputs are formatted as XML, like below:
+
+Format:
+{% for field in schema.inputs %}
+<{{field.name.lower()}}>{{ '{{' }}{{field.desc.capitalize()}}{{ '}}' }}</{{field.name.lower()}}>{% endfor %}
+{% for field in schema.outputs %}
+<{{field.name.lower()}}>{{ '{{' }}{{field.desc.capitalize()}}{{ '}}' }}</{{field.name.lower()}}>{% endfor %}
+
+{% if examples %}Examples:
+{% for example in examples %}{% for field in schema.inputs %}
+<{{field.name.lower()}}>{{example[field.name]}}</{{field.name.lower()}}>{% endfor %}
+{% for field in schema.outputs %}
+<{{field.name.lower()}}>{{example[field.name]}}</{{field.name.lower()}}>{% endfor %}{% endfor %}
+{% endif %}
+Task:
+{% for field in schema.inputs %}
+<{{field.name.lower()}}>{{todo[field.name]}}</{{field.name.lower()}}>{% endfor %}
+
+Complete {{ output_tags }}.
+
+```
+
+# examples/triviaqa.py
+
+```python
+import asyncio
+
+import plib.settings
+from plib import (
+    BootstrapFewShot,
+    Example,
+    InputField,
+    Metric,
+    OutputField,
+    Predict,
+    Query,
+    Response,
+    Schema,
+)
+
+# Define the schema for trivia QA
+trivia_schema = Schema(
+    instruction="Answer the trivia question accurately and concisely.",
+    inputs=[InputField("question", str, "the trivia question")],
+    outputs=[OutputField("answer", str, "the correct answer")],
+)
+
+
+# Define what makes a good answer (used by compiler to find examples)
+class TriviaMetric(Metric):
+    async def score(self, gold: Example, pred: Response) -> tuple[float, bool]:
+        """Returns score and whether prediction is good enough to use as example"""
+        # In practice, would compare against known correct answer
+        # For now, just check answer isn't too long or too short
+        answer = pred.outputs["answer"]
+        score = 1.0 if 10 <= len(answer) <= 100 else 0.0
+        return score, score > 0.9
+
+
+# Create dataset of questions to learn from
+dataset = [
+    Example.from_dicts(
+        trivia_schema,
+        {"question": "What is the capital of France?"},
+        {"answer": "Paris"},
+    ),
+    Example.from_dicts(
+        trivia_schema,
+        {"question": "Who wrote Romeo and Juliet?"},
+        {"answer": "Shakespeare"},
+    ),
+    Example.from_dicts(
+        trivia_schema,
+        {"question": "What is the chemical symbol for gold?"},
+        {"answer": "Au"},
+    ),
+]
+
+
+async def main():
+    plib.settings.configure(llm="ollama_chat/tulu3:8b")
+
+    # Create base predictor
+    predictor = Predict(trivia_schema)
+
+    # Create compiler to find good examples
+    compiler = BootstrapFewShot(n_examples=3)
+
+    # Find good examples and add them to predictor
+    metric = TriviaMetric()
+    optimized_predictor = await compiler.compile(
+        predictor, metric=metric, dataset=dataset
+    )
+
+    # Use the optimized predictor
+    query = Query(
+        trivia_schema, {"question": "Which planet is known as the Red Planet?"}
+    )
+    response = await optimized_predictor(query)
+    print(f"Q: {query.inputs['question']}")
+    print(f"A: {response.outputs['answer']}")
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+
+```
+
+# plib
+
+The key insight of plib is that selecting good examples (few-shot learning) is often more effective than spending time crafting the perfect zero-shot prompt.
+
+## Components:
+
+Schemas
+
+* Simple definitions of input/output structure
+* Just ordered lists of fields with types and descriptions
+* Easy to modify and compose
+* No complex inheritance or class magic
+
+Predict Module
+
+* Main interface for making LLM calls
+* Takes a schema and optional examples
+* Examples are just input/output pairs used in prompt construction
+* Simple interface: inputs -> outputs
+
+Program Logic Modules
+
+* Transform the basic predict/response flow
+* Examples: Chain of Thought adds reasoning steps, Best-of-N samples multiple responses
+* Focus on defining logical transformations, not prompt engineering
+* Think of them like regular programming constructs (loops, conditionals, etc.)
+
+Compilers
+
+* Find and select good examples automatically
+* BootstrapFewShot runs predictions and saves successful examples
+* Separate example selection from program logic
+* Let users develop different strategies for finding good examples
+
+The big idea is separation of concerns:
+
+* Schemas define structure
+* Predict handles LLM interaction
+* Modules define program flow
+* Compilers handle example selection
+
+This makes the system more modular and easier to extend - users can add new modules without worrying about example selection, or create new compilers without touching program logic.
+
+
+# Understanding Traces and Example Collection for Compiling
+
+The key insight about BootstrapFewShot is about where the examples come from. My initial implementation made a critical conceptual error: it tried to use the input examples from the dataset directly as few-shot examples. This misses the whole point of the bootstrap process.
+
+Here's the crucial thing to understand:
+
+## The Mental Model: Recording Success Stories
+
+Think of BootstrapFewShot like a teacher watching students solve problems, looking for great examples to show future students. But here's the key - what makes a good teaching example isn't just the final answer, but the whole problem-solving process.
+
+When you run a Module with tracing enabled:
+1. Each Predict node records its own part of the solving process
+2. This recording (the trace) captures both what that specific Predict was asked to do AND how it successfully did it
+3. These traces become our "success stories" - real examples of the model doing exactly what we want it to do
+
+## Why Traces Matter
+
+Let's say you have a complex Module that chains multiple Predicts together:
+- Predict A breaks down the problem
+- Predict B solves sub-problems
+- Predict C synthesizes the final answer
+
+The input dataset only has the very start and very end of this process. But each Predict needs examples relevant to ITS specific task:
+- A needs examples of good problem breakdown
+- B needs examples of solving sub-problems
+- C needs examples of good synthesis
+
+This is exactly what traces give us! When a run through the Module produces a good final result, each Predict's trace captures a successful example of its specific part of the process.
+
+## The Bootstrap Process
+
+Now the bootstrap process makes more sense:
+1. Run examples from dataset through the Module with tracing ON
+2. When the final output is good (per metric):
+   - Collect each Predict's trace
+   - These traces show how that Predict contributed to the success
+3. Use these collected traces as few-shot examples for future runs
+
+The name "Bootstrap" comes from this process - we're using successful runs to teach the model how to repeat that success, pulling itself up by its own bootstraps.
+
+## Common Mistakes to Avoid
+
+1. Using dataset examples directly
+   - ❌ Wrong: Using input examples as few-shot examples
+   - ✅ Right: Using traces from successful runs
+
+2. Using the same examples for all Predicts
+   - ❌ Wrong: Giving each Predict the same general examples
+   - ✅ Right: Giving each Predict examples of its specific successful executions
+
+3. Ignoring the trace mechanism
+   - ❌ Wrong: Just looking at final outputs
+   - ✅ Right: Capturing and using the full trace of how each Predict contributed
+
+Remember: The traces ARE your examples. The dataset is just the raw material you use to generate those traces through successful executions.

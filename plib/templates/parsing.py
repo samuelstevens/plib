@@ -1,8 +1,7 @@
 import re
 
-from .._data import Schema
-
 from .. import settings
+from .._data import Schema
 
 
 def parse_xml(text: str, schema: Schema) -> dict[str, object]:
@@ -31,7 +30,9 @@ def parse_markdown(text: str, schema: Schema) -> dict[str, object]:
             if match:
                 outputs[field.name] = field.type_(match.group(1).strip())
                 break
+
         if field.name not in outputs:
+            breakpoint()
             raise ValueError(f"Missing required output field: {field.name}")
     return outputs
 
@@ -47,4 +48,4 @@ def parse(text: str, schema: Schema, template_type: str = "") -> dict[str, objec
             f"Unknown template type: {template_type}. Must be one of: {', '.join(_PARSERS.keys())}"
         )
     parser = _PARSERS[template_type]
-    return parser(text)
+    return parser(text, schema)

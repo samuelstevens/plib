@@ -31,17 +31,12 @@ import contextlib
 import os
 import typing
 
-# Default values for optional settings
-_defaults = {
-    "temperature": 0.7,
-    "max_tokens": 1000,
-}
-
 _settings = {
     "trace": False,
     "logdir": "logs",
     "use_cache": True,
     "temperature": None,
+    "template": "xml",
 }
 
 os.makedirs(_settings["logdir"], exist_ok=True)
@@ -49,17 +44,14 @@ os.makedirs(_settings["logdir"], exist_ok=True)
 _known_errors = {
     "llm": "Need to call plib.settings.configure(llm='ollama_chat/llama3.1:8b')",
     "n_proc": "Need to call plib.settings.configure(n_proc=100)",
+    "template": "Need to call plib.settings.configure(template='xml|markdown')",
 }
 
 
 def get(key) -> typing.Any:
-    """Get a setting value, falling back to default if available."""
-    if key in _settings and _settings[key] is not None:
+    if key in _settings:
         return _settings[key]
-    
-    if key in _defaults:
-        return _defaults[key]
-        
+
     if key in _known_errors:
         raise ValueError(_known_errors[key])
 

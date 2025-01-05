@@ -2,7 +2,7 @@ import collections.abc
 
 import beartype
 
-from . import settings, templates, _llms
+from . import _llms, settings, templates
 from ._data import Example, Query, Response, Schema
 
 
@@ -75,7 +75,7 @@ class Predict(Module):
 
     async def forward(self, query: Query) -> Response:
         """Make LLM call with few-shot examples"""
-        template = templates.get_template()
+        template = templates.load()
 
         context = {
             "instruction": self.schema.instruction,
@@ -89,13 +89,12 @@ class Predict(Module):
 
         # Render prompt
         prompt = template.render(**context)
-        response_text, _ = await _llms.send(prompt)
-
-        # Create Response object from LLM output
-        response = Response(outputs={"text": response_text})
+        text, _ = await _llms.send(prompt)
+        outputs = templates.parse(text, self.schema)
+        response = Response(self.schema, outputs)
 
         # Create Example from query inputs and response outputs for tracing
-        example = Example(inputs=query.inputs, outputs=response.outputs)
+        example = Example(query, response)
 
         if settings.get("trace"):
             self._trace = example

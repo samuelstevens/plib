@@ -1,10 +1,11 @@
-from . import settings
-import litellm
 import beartype
+import litellm
+
+from . import settings
 
 
 @beartype.beartype
-def send(msg: str, history: list[object]) -> tuple[str, list[object]]:
+async def send(msg: str, history: list[object] = None) -> tuple[str, list[object]]:
     """
     Send a message to the LLM and get the response.
 
@@ -26,9 +27,6 @@ def send(msg: str, history: list[object]) -> tuple[str, list[object]]:
     temperature = (
         0.7 if settings.get("temperature") is None else settings.get("temperature")
     )
-    max_tokens = (
-        1000 if settings.get("max_tokens") is None else settings.get("max_tokens")
-    )
 
     try:
         # Format messages for chat completion
@@ -42,19 +40,18 @@ def send(msg: str, history: list[object]) -> tuple[str, list[object]]:
         messages.append({"role": "user", "content": msg})
 
         # Make LLM call
-        response = litellm.completion(
+        response = await litellm.acompletion(
             model=model,
             messages=messages,
             temperature=temperature,
-            max_tokens=max_tokens,
         )
 
         # Extract response and update history
         response_text = response.choices[0].message.content
-        
+
         # Add response to history
         messages.append({"role": "assistant", "content": response_text})
-        
+
         return response_text, messages
 
     except Exception as e:

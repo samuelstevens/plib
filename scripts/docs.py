@@ -1,7 +1,7 @@
 import glob
 import os
-import subprocess
 import re
+import subprocess
 
 
 def main(in_dpaths: list[str], out_fpath: str):

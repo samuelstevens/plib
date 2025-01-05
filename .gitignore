@@ -1,0 +1,6 @@
+.aider*
+.env
+__pycache__/
+build/
+plib.egg-info/
+.DS_Store
