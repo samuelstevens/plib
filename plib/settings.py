@@ -31,7 +31,18 @@ import contextlib
 import os
 import typing
 
-_settings = {"trace": False, "logdir": "logs", "use_cache": True, "temperature": None}
+# Default values for optional settings
+_defaults = {
+    "temperature": 0.7,
+    "max_tokens": 1000,
+}
+
+_settings = {
+    "trace": False,
+    "logdir": "logs",
+    "use_cache": True,
+    "temperature": None,
+}
 
 os.makedirs(_settings["logdir"], exist_ok=True)
 
@@ -42,9 +53,13 @@ _known_errors = {
 
 
 def get(key) -> typing.Any:
-    if key in _settings:
+    """Get a setting value, falling back to default if available."""
+    if key in _settings and _settings[key] is not None:
         return _settings[key]
-
+    
+    if key in _defaults:
+        return _defaults[key]
+        
     if key in _known_errors:
         raise ValueError(_known_errors[key])
 
