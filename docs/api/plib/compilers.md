@@ -11,6 +11,8 @@ Classes
     1. Captures traces from each Predict node
     2. If metric scores well, saves those traces as candidate examples
     3. Updates each Predict with its best examples
+    
+    # TODO: each Predict should use contextvars for its _trace attribute, so that you can trace in parallel.
 
     ### Ancestors (in MRO)
 

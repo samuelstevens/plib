@@ -14,6 +14,8 @@ class BootstrapFewShot(Compiler):
     1. Captures traces from each Predict node
     2. If metric scores well, saves those traces as candidate examples
     3. Updates each Predict with its best examples
+
+    # TODO: each Predict should use contextvars for its _trace attribute, so that you can trace in parallel.
     """
 
     def __init__(self, n_examples: int = 3):

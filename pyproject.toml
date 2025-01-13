@@ -11,7 +11,6 @@ dependencies = [
     "litellm>=1.56.10",
     "openai>=1.59.3",
     "orjson>=3.10.13",
-    "tqdm>=4.67.1",
     "tyro>=0.9.5",
 ]
 

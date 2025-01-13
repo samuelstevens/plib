@@ -54,6 +54,6 @@ async def send(msg: str, history: list[object] = None) -> tuple[str, list[object
 
         return response_text, messages
 
-    except Exception as e:
+    except Exception as err:
         # Wrap any LiteLLM errors
-        raise RuntimeError(f"LLM call failed: {str(e)}") from e
+        raise RuntimeError(f"LLM call failed: {str(err)}") from err

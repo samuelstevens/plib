@@ -265,9 +265,9 @@ async def send(msg: str, history: list[object] = None) -> tuple[str, list[object
 
         return response_text, messages
 
-    except Exception as e:
+    except Exception as err:
         # Wrap any LiteLLM errors
-        raise RuntimeError(f"LLM call failed: {str(e)}") from e
+        raise RuntimeError(f"LLM call failed: {str(err)}") from err
 
 ```
 
@@ -423,6 +423,8 @@ class BootstrapFewShot(Compiler):
     1. Captures traces from each Predict node
     2. If metric scores well, saves those traces as candidate examples
     3. Updates each Predict with its best examples
+
+    # TODO: each Predict should use contextvars for its _trace attribute, so that you can trace in parallel.
     """
 
     def __init__(self, n_examples: int = 3):

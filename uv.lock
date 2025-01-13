@@ -566,7 +566,6 @@ dependencies = [
     { name = "litellm" },
     { name = "openai" },
     { name = "orjson" },
-    { name = "tqdm" },
     { name = "tyro" },
 ]
 
@@ -586,7 +585,6 @@ requires-dist = [
     { name = "litellm", specifier = ">=1.56.10" },
     { name = "openai", specifier = ">=1.59.3" },
     { name = "orjson", specifier = ">=3.10.13" },
-    { name = "tqdm", specifier = ">=4.67.1" },
     { name = "tyro", specifier = ">=0.9.5" },
 ]
 
